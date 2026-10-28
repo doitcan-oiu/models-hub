@@ -18,6 +18,18 @@ type recoveryJob struct {
 // Channel recovery and key recovery have independent enablement policies.
 // Manually disabled keys have no failure reason and remain disabled.
 func recoveryForChannel(c Channel, s Settings, credentials []Credential, now time.Time) (recoveryJob, bool) {
+	return selectRecoveryJob(c, s, credentials, now, nil)
+}
+
+func recoveryDue(value *string, now time.Time) bool {
+	if value == nil {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339Nano, *value)
+	return err != nil || !t.After(now)
+}
+
+func selectRecoveryJob(c Channel, s Settings, credentials []Credential, now time.Time, lastProbed map[string]time.Time) (recoveryJob, bool) {
 	job := recoveryJob{channel: c, stream: true}
 	if !c.Enabled || c.Archived {
 		return job, false
@@ -26,21 +38,30 @@ func recoveryForChannel(c Channel, s Settings, credentials []Credential, now tim
 	if !policy.Enabled {
 		policy = AutoDisable{Enabled: s.AutoDisableEnabled, Target: s.AutoDisableTarget, Recover: s.AutoDisableRecover, Cooldown: s.AutoDisableCooldown}
 	}
-	due := func(value *string) bool {
-		if value == nil {
-			return true
-		}
-		t, err := time.Parse(time.RFC3339Nano, *value)
-		return err != nil || !t.After(now)
+	if c.Health.Reason != nil && strings.Contains(*c.Health.Reason, "响应耗时") {
+		job.stream = false
 	}
+	recoverChannel := c.Status != "healthy" && s.AutoRecover
+	if c.Health.AutoDisabled {
+		recoverChannel = policy.Recover
+	}
+	recoverChannel = recoverChannel && recoveryDue(c.Health.CooldownUntil, now)
 	if policy.Recover {
 		eligible := make([]Credential, 0)
+		hasEnabled := false
 		for _, cr := range credentials {
-			if !cr.Enabled && cr.Reason != nil && !strings.HasPrefix(*cr.Reason, "BBDevLab ") && !credentialEngineExpired(cr) && due(cr.DisabledAt) {
+			if cr.Enabled && !credentialEngineExpired(cr) {
+				hasEnabled = true
+			}
+			if !cr.Enabled && cr.Reason != nil && !strings.HasPrefix(*cr.Reason, "BBDevLab ") && !credentialEngineExpired(cr) && recoveryDue(cr.DisabledAt, now) {
 				eligible = append(eligible, cr)
 			}
 		}
 		sort.SliceStable(eligible, func(i, j int) bool {
+			// A permanently failed key must not starve other recovering keys.
+			if a, b := lastProbed[eligible[i].ID], lastProbed[eligible[j].ID]; !a.Equal(b) {
+				return a.Before(b)
+			}
 			a, b := "", ""
 			if eligible[i].DisabledAt != nil {
 				a = *eligible[i].DisabledAt
@@ -54,19 +75,17 @@ func recoveryForChannel(c Channel, s Settings, credentials []Credential, now tim
 			return eligible[i].ID < eligible[j].ID
 		})
 		if len(eligible) > 0 {
+			// A healthy enabled key can recover the channel while failed keys
+			// continue their own recovery. Rotate all targets fairly.
+			if recoverChannel && hasEnabled && !lastProbed[""].After(lastProbed[eligible[0].ID]) {
+				return job, true
+			}
 			job.credentialID = eligible[0].ID
 			return job, true
 		}
 	}
-	recoverChannel := c.Status != "healthy" && s.AutoRecover
-	if c.Health.AutoDisabled {
-		recoverChannel = policy.Recover
-	}
-	if !recoverChannel || !due(c.Health.CooldownUntil) {
+	if !recoverChannel {
 		return job, false
-	}
-	if c.Health.Reason != nil && strings.Contains(*c.Health.Reason, "响应耗时") {
-		job.stream = false
 	}
 	return job, true
 }
@@ -79,6 +98,7 @@ func RunMaintenance(ctx context.Context, s *Store, e *Engine) {
 	defer ticker.Stop()
 	lastCleanup := time.Time{}
 	lastProbed := make(map[string]time.Time)
+	credentialProbed := make(map[string]map[string]time.Time)
 	for {
 		select {
 		case <-ctx.Done():
@@ -111,7 +131,7 @@ func RunMaintenance(ctx context.Context, s *Store, e *Engine) {
 				credentials, _ = s.Credentials(credctx, c.ID, true)
 				cancel()
 			}
-			if job, ok := recoveryForChannel(c, settings, credentials, time.Now()); ok {
+			if job, ok := selectRecoveryJob(c, settings, credentials, time.Now(), credentialProbed[c.ID]); ok {
 				jobs = append(jobs, job)
 			}
 		}
@@ -135,6 +155,10 @@ func RunMaintenance(ctx context.Context, s *Store, e *Engine) {
 				return
 			}
 			lastProbed[job.channel.ID] = time.Now()
+			if credentialProbed[job.channel.ID] == nil {
+				credentialProbed[job.channel.ID] = make(map[string]time.Time)
+			}
+			credentialProbed[job.channel.ID][job.credentialID] = lastProbed[job.channel.ID]
 			wg.Add(1)
 			go func(job recoveryJob) {
 				defer wg.Done()

@@ -189,8 +189,16 @@ func (r *channelRuntime) observe(c Channel, a Attempt, s Settings) engineHealth 
 			h.Reason = nil
 			h.RecoveryCount = 0
 			h.AutoDisabled = false
+			// Recovery starts a fresh health window for both response modes.
+			// Otherwise old failures from the other mode can immediately reopen
+			// the circuit after a successful recovery.
+			r.recentStream = nil
+			r.recentNonstream = nil
+			r.resetAt = started
 			*samples = []engineHealthSample{v}
 			h.Samples = 1
+			h.AverageTTFT = nil
+			h.AverageDuration = nil
 			if a.Stream {
 				h.AverageTTFT = a.TTFT
 			} else {

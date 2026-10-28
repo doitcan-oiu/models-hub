@@ -113,6 +113,7 @@ type Engine struct {
 	store           engineStore
 	cfg             EngineConfig
 	snapshot        atomic.Pointer[engineSnapshot]
+	refreshMu       sync.Mutex
 	runtimes        sync.Map
 	routingMu       sync.Mutex
 	routingCounters map[string]uint64
@@ -170,6 +171,11 @@ func newEngine(store engineStore, cfg EngineConfig) *Engine {
 // Refresh only swaps a fully loaded immutable snapshot. Requests use the last
 // good snapshot while a database refresh is slow or temporarily unavailable.
 func (e *Engine) Refresh(ctx context.Context) error {
+	e.refreshMu.Lock()
+	defer e.refreshMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	channels, err := e.store.Channels(ctx)
 	if err != nil {
 		return err
@@ -256,9 +262,7 @@ func (e *Engine) ResetCircuit(channelID string) {
 	if v, ok := e.runtimes.Load(channelID); ok {
 		r := v.(*channelRuntime)
 		r.mu.Lock()
-		r.failures = 0
-		r.openUntil = time.Time{}
-		r.halfOpen = false
+		r.resetCircuitLocked()
 		r.healthLoaded = false
 		r.recentStream = nil
 		r.recentNonstream = nil
@@ -300,7 +304,9 @@ func (e *Engine) probeChannel(ctx context.Context, c Channel, stream bool, crede
 		model = c.Models[0]
 	}
 	path := "/v1/chat/completions"
-	body := map[string]any{"model": model, "messages": []any{map[string]any{"role": "user", "content": "Reply OK"}}, "max_tokens": 1, "stream": stream}
+	// Leave room for a short real answer; a one-token probe can end before
+	// the model emits any content and prevent an otherwise healthy recovery.
+	body := map[string]any{"model": model, "messages": []any{map[string]any{"role": "user", "content": "Reply OK"}}, "max_tokens": 64, "stream": stream}
 	if c.Config.Protocol == "anthropic" {
 		path = "/v1/messages"
 	}
@@ -309,7 +315,7 @@ func (e *Engine) probeChannel(ctx context.Context, c Channel, stream bool, crede
 		if stream {
 			path = "/v1beta/models/" + model + ":streamGenerateContent?alt=sse"
 		}
-		body = map[string]any{"model": model, "contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "Reply OK"}}}}, "generationConfig": map[string]any{"maxOutputTokens": 1}}
+		body = map[string]any{"model": model, "contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "Reply OK"}}}}, "generationConfig": map[string]any{"maxOutputTokens": 64}}
 	}
 	data, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://gateway.internal"+path, bytes.NewReader(data))
@@ -366,6 +372,7 @@ type channelRuntime struct {
 	active, limit, failures int
 	openUntil               time.Time
 	halfOpen                bool
+	circuitGeneration       uint64
 	transport               *http.Transport
 	client                  *http.Client
 	credentialIndex         atomic.Uint64
@@ -429,37 +436,85 @@ func (e *Engine) runtimeWithLimit(runtimeID string, limit int) *channelRuntime {
 	return r
 }
 
-// No caller waits for a slot. A saturated or open channel is skipped at once,
-// and every channel owns its own connection pool and semaphore.
-func (r *channelRuntime) acquire(probe bool) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := time.Now()
-	if r.active >= r.limit {
-		return false
-	}
-	if !probe && !r.openUntil.IsZero() {
-		if now.Before(r.openUntil) || r.halfOpen {
-			return false
-		}
-		r.halfOpen = true
-	}
-	r.active++
-	return true
+type runtimeLease struct {
+	generation uint64
+	halfOpen   bool
+	protected  bool
 }
 
-func (r *channelRuntime) release(outcome int, cfg EngineConfig) {
+func (r *channelRuntime) resetCircuitLocked() {
+	r.failures = 0
+	r.openUntil = time.Time{}
+	r.halfOpen = false
+	r.circuitGeneration++
+}
+
+func (e *Engine) channelRuntimeState(channelID string) *ChannelRuntimeState {
+	v, ok := e.runtimes.Load(channelID)
+	if !ok {
+		return nil
+	}
+	r := v.(*channelRuntime)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	state := &ChannelRuntimeState{Active: r.active, Limit: r.limit, HalfOpen: r.halfOpen}
+	if !r.openUntil.IsZero() {
+		state.CircuitUntil = engineStringPtr(r.openUntil.UTC().Format(time.RFC3339Nano))
+	}
+	return state
+}
+
+// No caller waits for a slot. Each channel owns its own pool and semaphore.
+func (r *channelRuntime) acquire(probe, protect bool) (runtimeLease, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// The channel's error-cooldown exemption also applies to this fast circuit.
+	if !protect && (!r.openUntil.IsZero() || r.failures > 0) {
+		r.resetCircuitLocked()
+	}
+	now := time.Now()
+	if r.active >= r.limit {
+		return runtimeLease{}, "并发已满"
+	}
+	lease := runtimeLease{generation: r.circuitGeneration, protected: protect && !probe}
+	if lease.protected && !r.openUntil.IsZero() {
+		if now.Before(r.openUntil) || r.halfOpen {
+			return runtimeLease{}, "熔断冷却或恢复检测中"
+		}
+		r.halfOpen = true
+		lease.halfOpen = true
+	}
+	r.active++
+	return lease, ""
+}
+
+func (r *channelRuntime) release(lease runtimeLease, outcome int, cfg EngineConfig) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.active--
-	r.halfOpen = false
+	// A pre-reset or pre-recovery request must release its slot without
+	// reopening the circuit or releasing another request's half-open lease.
+	if lease.generation != r.circuitGeneration {
+		return
+	}
+	if lease.halfOpen {
+		r.halfOpen = false
+	}
+	if !lease.protected {
+		return
+	}
 	if outcome > 0 {
-		r.failures = 0
-		r.openUntil = time.Time{}
+		r.resetCircuitLocked()
 	} else if outcome < 0 {
+		// Requests admitted before the circuit opened must not extend its
+		// cooldown. Only the admitted half-open request can open it again.
+		if !r.openUntil.IsZero() && !lease.halfOpen {
+			return
+		}
 		r.failures++
 		if r.failures >= cfg.CircuitFailures {
 			r.openUntil = time.Now().Add(cfg.CircuitCooldown)
+			r.halfOpen = false
 		}
 	}
 }
@@ -530,7 +585,8 @@ func (e *Engine) ServeGateway(w http.ResponseWriter, r *http.Request, key *APIKe
 		engineError(w, 401, "API Key 未启用、已过期或策略无效", id)
 		return
 	}
-	if len(engineCandidates(snapshot.channels, profile, model, forceChannelID, s, true)) == 0 {
+	authorized := engineCandidates(snapshot.channels, profile, model, forceChannelID, s, true)
+	if len(authorized) == 0 {
 		engineError(w, 403, "当前策略范围内没有支持该模型的授权渠道", id)
 		return
 	}
@@ -559,7 +615,7 @@ func (e *Engine) ServeGateway(w http.ResponseWriter, r *http.Request, key *APIKe
 	var attempts []Attempt
 	var health []engineHealth
 	var last engineCandidate
-	result := attemptResult{status: 503, err: errors.New("已授权渠道均已停用、繁忙或熔断")}
+	result := attemptResult{status: 503, err: errors.New(engineUnavailableReason(authorized, s))}
 	attemptNumber := 0
 	defer func() {
 		if probe, ok := ctx.Value(engineProbeContextKey{}).(*engineProbeOutcome); ok {
@@ -621,6 +677,7 @@ func (e *Engine) ServeGateway(w http.ResponseWriter, r *http.Request, key *APIKe
 		maxChannels = 1 + min(10, max(0, s.MaxChannelRetries))
 	}
 	usedChannels := 0
+	busy, circuits := 0, 0
 	for _, candidate := range candidates {
 		if usedChannels >= maxChannels {
 			break
@@ -652,7 +709,13 @@ func (e *Engine) ServeGateway(w http.ResponseWriter, r *http.Request, key *APIKe
 					break
 				}
 			}
-			if !rt.acquire(source == "probe") {
+			lease, blocked := rt.acquire(source == "probe", candidate.channel.Config.Cooldown.Error)
+			if blocked != "" {
+				if blocked == "并发已满" {
+					busy++
+				} else {
+					circuits++
+				}
 				break
 			}
 			if key != nil && !quotaConsumed {
@@ -661,7 +724,7 @@ func (e *Engine) ServeGateway(w http.ResponseWriter, r *http.Request, key *APIKe
 				ok, consumeErr := e.store.ConsumeKey(dbctx, key.ID, profile.ID, max(int64(0), limit))
 				dbcancel()
 				if consumeErr != nil || !ok {
-					rt.release(0, e.cfg)
+					rt.release(lease, 0, e.cfg)
 					result.status = 429
 					result.err = errors.New("API Key 请求额度已用完或策略已变更")
 					if consumeErr != nil {
@@ -688,12 +751,12 @@ func (e *Engine) ServeGateway(w http.ResponseWriter, r *http.Request, key *APIKe
 			} else if !result.cancelled && !result.healthIgnored && (result.status >= 500 || result.status == 408 || result.status == 429 || result.status == 401 || result.status == 403) {
 				outcome = -1
 			}
-			rt.release(outcome, e.cfg)
+			rt.release(lease, outcome, e.cfg)
 			if source == "probe" && outcome > 0 {
 				primaryRuntime.mu.Lock()
-				primaryRuntime.failures = 0
-				primaryRuntime.openUntil = time.Time{}
-				primaryRuntime.halfOpen = false
+				if began.After(primaryRuntime.resetAt) {
+					primaryRuntime.resetCircuitLocked()
+				}
 				primaryRuntime.mu.Unlock()
 			}
 			a := Attempt{ID: engineID(), RequestID: id, ChannelID: candidate.channel.ID, ChannelName: candidate.channel.Name, Model: candidate.model, Stream: stream, StartedAt: began.UTC().Format(time.RFC3339Nano), TTFT: result.ttft, Duration: time.Since(began).Seconds(), Status: result.status, Result: "success", InputTokens: result.input, OutputTokens: result.output, Attempt: attemptNumber}
@@ -711,8 +774,13 @@ func (e *Engine) ServeGateway(w http.ResponseWriter, r *http.Request, key *APIKe
 				a.Result = "slow"
 			}
 			attempts = append(attempts, a)
-			if h := primaryRuntime.observe(candidate.channel, a, s); h.id != "" {
-				health = append(health, h)
+			// Retesting an already disabled key must not mark the whole channel
+			// unhealthy or break another key's channel-recovery streak.
+			failedDisabledKeyProbe := source == "probe" && !credential.Enabled && credential.ID != "" && result.err != nil
+			if !failedDisabledKeyProbe {
+				if h := primaryRuntime.observe(candidate.channel, a, s); h.id != "" {
+					health = append(health, h)
+				}
 			}
 			if result.err == nil {
 				if s.StickyMode == "prefer" {
@@ -758,7 +826,25 @@ func (e *Engine) ServeGateway(w http.ResponseWriter, r *http.Request, key *APIKe
 		_, _ = w.Write(result.body)
 		return
 	}
+	if attemptNumber == 0 && busy+circuits > 0 {
+		result.err = fmt.Errorf("已授权渠道暂不可用：并发已满 %d 个，熔断冷却或恢复检测中 %d 个", busy, circuits)
+	}
 	engineError(w, result.status, e.publicError(s, errorString(result.err)), id)
+}
+
+func engineUnavailableReason(authorized []engineCandidate, s Settings) string {
+	var disabled, automatic, unhealthy int
+	for _, c := range authorized {
+		switch {
+		case !c.channel.Enabled:
+			disabled++
+		case c.channel.Health.AutoDisabled:
+			automatic++
+		case s.AutoSwitch && c.channel.Status != "healthy":
+			unhealthy++
+		}
+	}
+	return fmt.Sprintf("已授权渠道不可用：手动停用 %d 个，自动停用 %d 个，健康检查未恢复 %d 个", disabled, automatic, unhealthy)
 }
 
 func (e *Engine) attempt(w http.ResponseWriter, r *http.Request, c engineCandidate, rt *channelRuntime, original map[string]any, raw []byte, clientModel string, stream bool, s Settings, id string, number int, source string) (result attemptResult, credential Credential) {
@@ -798,6 +884,19 @@ func (e *Engine) attempt(w http.ResponseWriter, r *http.Request, c engineCandida
 		}
 		if (v.Enabled || source == "probe" && v.Reason != nil) && !credentialEngineExpired(v) {
 			available = append(available, v)
+		}
+	}
+	if source == "probe" && forceCredential == "" {
+		// Channel recovery should use an active key when one exists; disabled
+		// keys are checked independently by the credential recovery scheduler.
+		enabled := make([]Credential, 0, len(available))
+		for _, v := range available {
+			if v.Enabled {
+				enabled = append(enabled, v)
+			}
+		}
+		if len(enabled) > 0 {
+			available = enabled
 		}
 	}
 	if len(available) == 0 && c.channel.Config.Protocol != "mock" {

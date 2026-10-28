@@ -57,6 +57,7 @@ docker compose -f compose.yaml -f compose.mysql.yaml up -d --build
 - 同时备份数据库和 `data/config.json`（容器内为 `/app/data/config.json`），其中保存了上游凭据的加密密钥。
 - `docker compose down` 保留数据；`docker compose down -v` 会删除数据卷。
 - `/health/live` 检查进程；`/health/ready` 检查初始化状态和数据库。
+- 渠道页显示熔断冷却和并发状态；可点击“解除熔断”手动恢复，自动停用的密钥按恢复规则轮流检测。
 
 升级与查看日志：
 

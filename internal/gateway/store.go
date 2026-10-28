@@ -126,11 +126,15 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// InvalidateCache is synchronous. A load started before an admin write cannot
-// repopulate the cache after this call; network/database work never holds cacheMu.
+// InvalidateCache is synchronous. Loads invalidated while they are in flight
+// are discarded before they can populate the cache or return stale state.
+// Network/database work never holds cacheMu.
 func (s *Store) InvalidateCache() { s.cacheMu.Lock(); s.epoch++; clear(s.cache); s.cacheMu.Unlock() }
 func (s *Store) cached(ctx context.Context, key string, load func() (any, error)) (any, error) {
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		s.cacheMu.Lock()
 		if hit, ok := s.cache[key]; ok && time.Now().Before(hit.expires) {
 			s.cacheMu.Unlock()
@@ -152,7 +156,8 @@ func (s *Store) cached(ctx context.Context, key string, load func() (any, error)
 		s.cacheMu.Unlock()
 		value, err := load()
 		s.cacheMu.Lock()
-		if err == nil && epoch == s.epoch {
+		invalidated := epoch != s.epoch
+		if err == nil && !invalidated {
 			if len(s.cache) >= 4096 {
 				clear(s.cache)
 			}
@@ -161,6 +166,9 @@ func (s *Store) cached(ctx context.Context, key string, load func() (any, error)
 		delete(s.flights, key)
 		close(flight.done)
 		s.cacheMu.Unlock()
+		if invalidated {
+			continue
+		}
 		return value, err
 	}
 }

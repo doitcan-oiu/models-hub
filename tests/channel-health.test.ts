@@ -109,3 +109,47 @@ describe('channel health filtering', () => {
     expect(matchesChannelHealthStatus(channel({ status: 'degraded' }), ['等待恢复', '冷却中'], now)).toBe(false);
   });
 });
+
+describe('live channel routing state', () => {
+  const runtime = { active: 0, limit: 64, circuitUntil: new Date(now + 15_000).toISOString(), halfOpen: false };
+
+  it('shows fast circuit lockout even while stored health is green', () => {
+    const blocked = channel({ runtime });
+    expect(channelHealthView(blocked, now)).toMatchObject({
+      label: '熔断冷却', color: 'warning', canReset: true, resetLabel: '解除熔断', cooldownLabel: '熔断剩余 15秒',
+    });
+    expect(matchesChannelHealthStatus(blocked, ['健康'], now)).toBe(false);
+    expect(matchesChannelHealthStatus(blocked, ['熔断冷却'], now)).toBe(true);
+    expect(matchesChannelHealthStatus(blocked, ['冷却中'], now)).toBe(true);
+  });
+
+  it('shows a recovery request in progress after the circuit deadline', () => {
+    const recovering = channel({ runtime: { ...runtime, active: 1, circuitUntil: new Date(now - 1).toISOString(), halfOpen: true } });
+    expect(channelHealthView(recovering, now)).toMatchObject({ label: '恢复检测中', color: 'warning', canReset: true, resetLabel: '解除熔断', cooldownLabel: null });
+    expect(matchesChannelHealthStatus(recovering, ['恢复检测中'], now)).toBe(true);
+    expect(matchesChannelHealthStatus(recovering, ['冷却中', '等待恢复'], now)).toBe(false);
+  });
+
+  it.each([0, -1])('allows expired fast circuits without claiming they still block routing at offset %i', offset => {
+    const expired = channel({ runtime: { ...runtime, circuitUntil: new Date(now + offset).toISOString() } });
+    expect(channelHealthView(expired, now)).toMatchObject({ label: '健康', color: 'success', canReset: false, cooldownLabel: null });
+    expect(matchesChannelHealthStatus(expired, ['冷却中', '等待恢复', '熔断冷却'], now)).toBe(false);
+  });
+
+  it('distinguishes full concurrency from a resettable health lockout', () => {
+    const full = channel({ runtime: { ...runtime, active: 64, circuitUntil: null } });
+    expect(channelHealthView(full, now)).toMatchObject({ label: '并发已满', color: 'warning', canReset: false, cooldownLabel: null });
+    expect(channelHealthView(full, now).reason).toContain('64/64');
+    expect(channelHealthView(channel({ runtime: { ...runtime, active: 63, circuitUntil: null } }), now).label).toBe('健康');
+  });
+
+  it.each([
+    [{ enabled: false }, {}, '已停用', false],
+    [{ archived: true }, {}, '已归档', false],
+    [{}, { autoDisabled: true }, '自动停用', true],
+    [{ status: 'offline' }, {}, '不可用', true],
+    [{ status: 'degraded' }, {}, '延迟异常', true],
+  ] as const)('preserves stronger channel restrictions: %s', (patch, health, label, canReset) => {
+    expect(channelHealthView(channel({ ...patch, runtime }, health), now)).toMatchObject({ label, canReset });
+  });
+});

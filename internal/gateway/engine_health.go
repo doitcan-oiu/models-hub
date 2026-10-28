@@ -46,6 +46,13 @@ func (s *Store) ApplyCredentialAttempt(ctx context.Context, a Attempt, c Channel
 	if !currentChannel.Config.Cooldown.Error {
 		return nil
 	}
+	policy = currentChannel.Config.AutoDisable
+	if !policy.Enabled {
+		policy = AutoDisable{Enabled: settings.AutoDisableEnabled, Target: settings.AutoDisableTarget, Statuses: settings.AutoDisableStatuses, Threshold: settings.AutoDisableThreshold, Recover: settings.AutoDisableRecover, Cooldown: settings.AutoDisableCooldown}
+	}
+	if source != "probe" && (!policy.Enabled || policy.Target != "key") {
+		return nil
+	}
 	allowed, err := cutoffAllowsTx(ctx, tx, c.ID, a.StartedAt)
 	if err != nil {
 		return err
@@ -79,11 +86,10 @@ func (s *Store) ApplyCredentialAttempt(ctx context.Context, a Attempt, c Channel
 		failures = 0
 	}
 	if !enabled {
-		if source != "probe" || reason == nil || disabledAt == nil || !policy.Recover || strings.HasPrefix(*reason, "BBDevLab ") {
+		if source != "probe" || reason == nil || !policy.Recover || strings.HasPrefix(*reason, "BBDevLab ") || credentialEngineExpired(credential) {
 			return nil
 		}
-		until, err := time.Parse(time.RFC3339Nano, *disabledAt)
-		if err != nil || time.Now().Before(until) {
+		if !recoveryDue(disabledAt, time.Now()) {
 			return nil
 		}
 		recovery = 0

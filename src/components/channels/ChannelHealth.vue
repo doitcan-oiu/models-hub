@@ -8,7 +8,7 @@ const now = ref(Date.now());
 const timer = window.setInterval(() => { now.value = Date.now(); }, 1000);
 onUnmounted(() => window.clearInterval(timer));
 const health = computed(() => channelHealthView(props.channel, now.value));
-const reason = computed(() => props.channel.health.reason || (props.channel.status !== 'healthy' || props.channel.health.autoDisabled ? health.value.reason : null));
+const reason = computed(() => (props.channel.health.reason || health.value.color === 'warning' || health.value.color === 'danger') ? health.value.reason : null);
 const color = computed(() => ({ default: 'grey', success: 'success', warning: 'warning', danger: 'error' }[health.value.color]));
 const history = computed(() => props.channel.history.slice(-14));
 </script>

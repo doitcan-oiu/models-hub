@@ -207,6 +207,7 @@ func newChannel(b map[string]any, prior *Channel, dev bool) (Channel, error) {
 	if prior != nil {
 		c = *prior
 	}
+	c.Runtime = nil
 	patch := map[string]any{}
 	for _, k := range []string{"name", "provider", "model", "models", "tags", "endpoint", "website", "displayMultiplier", "weight", "priority", "enabled", "archived", "config"} {
 		if v, ok := b[k]; ok {

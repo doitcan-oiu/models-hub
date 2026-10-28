@@ -39,12 +39,12 @@ watch(channelToEdit, value => { if (value) { editor.value = value; channelToEdit
 const activeChannels = computed(() => channels.value.filter(channel => !channel.archived));
 const scopedChannels = computed(() => channels.value.filter(channel => channel.archived === archive.value));
 const healthy = computed(() => activeChannels.value.filter(channel => channelHealthView(channel, now.value).color === 'success').length);
-const cooling = computed(() => activeChannels.value.filter(channel => channel.enabled && Date.parse(channel.health.cooldownUntil ?? '') > now.value).length);
+const cooling = computed(() => activeChannels.value.filter(channel => channel.enabled && matchesChannelHealthStatus(channel, ['冷却中'], now.value)).length);
 const modelCount = computed(() => new Set(activeChannels.value.flatMap(channel => channel.models)).size);
 const allTags = computed(() => [...new Set([...tags.value, ...channels.value.flatMap(channel => channel.tags)])].sort());
 const allModels = computed(() => [...new Set(channels.value.flatMap(channel => channel.models))].sort());
 const allProviders = computed(() => [...new Set(channels.value.map(channel => channel.provider))].sort());
-const stateItems = ['健康', '待检测', '待配置密钥', '延迟异常', '不可用', '自动停用', '冷却中', '等待恢复', '已停用', '已归档'];
+const stateItems = ['健康', '待检测', '待配置密钥', '延迟异常', '不可用', '自动停用', '冷却中', '等待恢复', '熔断冷却', '恢复检测中', '并发已满', '已停用', '已归档'];
 const activeFilters = computed(() => !!query.value?.trim() || providers.value.length > 0 || statuses.value.length > 0 || filterModels.value.length > 0 || filterTags.value.length > 0 || untagged.value);
 const filterCount = computed(() => providers.value.length + statuses.value.length + filterModels.value.length + filterTags.value.length + Number(untagged.value));
 function healthFilter(status?: string) { archive.value = false; statuses.value = status ? [status] : []; }

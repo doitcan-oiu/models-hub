@@ -83,34 +83,43 @@ type Health struct {
 	Reason          *string  `json:"reason"`
 	AutoDisabled    bool     `json:"autoDisabled"`
 }
+
+// ChannelRuntimeState is a live management snapshot, never channel configuration.
+type ChannelRuntimeState struct {
+	Active       int     `json:"active"`
+	Limit        int     `json:"limit"`
+	CircuitUntil *string `json:"circuitUntil"`
+	HalfOpen     bool    `json:"halfOpen"`
+}
 type Channel struct {
-	ID                    string          `json:"id"`
-	Name                  string          `json:"name"`
-	Provider              string          `json:"provider"`
-	Model                 string          `json:"model"`
-	Models                []string        `json:"models"`
-	Tags                  []string        `json:"tags"`
-	Weight                int             `json:"weight"`
-	Endpoint              string          `json:"endpoint"`
-	Status                string          `json:"status"`
-	Priority              int             `json:"priority"`
-	TTFT                  float64         `json:"ttft"`
-	SuccessRate           float64         `json:"successRate"`
-	Requests              int64           `json:"requests"`
-	Enabled               bool            `json:"enabled"`
-	Color                 string          `json:"color"`
-	History               []int           `json:"history"`
-	CreatedAt             string          `json:"createdAt"`
-	Archived              bool            `json:"archived"`
-	Config                ChannelConfig   `json:"config"`
-	CredentialCount       int             `json:"credentialCount"`
-	Health                Health          `json:"health"`
-	HasAccountCredentials bool            `json:"hasAccountCredentials,omitempty"`
-	AccountAuthMode       string          `json:"accountAuthMode,omitempty"`
-	AccountIntegration    string          `json:"accountIntegration,omitempty"`
-	AccountBalance        *GatewayBalance `json:"accountBalance,omitempty"`
-	DisplayMultiplier     float64         `json:"displayMultiplier"`
-	Website               string          `json:"website"`
+	Runtime               *ChannelRuntimeState `json:"runtime,omitempty"`
+	ID                    string               `json:"id"`
+	Name                  string               `json:"name"`
+	Provider              string               `json:"provider"`
+	Model                 string               `json:"model"`
+	Models                []string             `json:"models"`
+	Tags                  []string             `json:"tags"`
+	Weight                int                  `json:"weight"`
+	Endpoint              string               `json:"endpoint"`
+	Status                string               `json:"status"`
+	Priority              int                  `json:"priority"`
+	TTFT                  float64              `json:"ttft"`
+	SuccessRate           float64              `json:"successRate"`
+	Requests              int64                `json:"requests"`
+	Enabled               bool                 `json:"enabled"`
+	Color                 string               `json:"color"`
+	History               []int                `json:"history"`
+	CreatedAt             string               `json:"createdAt"`
+	Archived              bool                 `json:"archived"`
+	Config                ChannelConfig        `json:"config"`
+	CredentialCount       int                  `json:"credentialCount"`
+	Health                Health               `json:"health"`
+	HasAccountCredentials bool                 `json:"hasAccountCredentials,omitempty"`
+	AccountAuthMode       string               `json:"accountAuthMode,omitempty"`
+	AccountIntegration    string               `json:"accountIntegration,omitempty"`
+	AccountBalance        *GatewayBalance      `json:"accountBalance,omitempty"`
+	DisplayMultiplier     float64              `json:"displayMultiplier"`
+	Website               string               `json:"website"`
 }
 type ModelMapping struct {
 	From string   `json:"from"`

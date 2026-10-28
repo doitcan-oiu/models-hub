@@ -29,6 +29,8 @@ export type ChannelConfig = {
   mock: { scenario: MockScenario; delayMs: number; status: number; failuresBeforeSuccess: number };
 };
 export type GatewayChannel = {
+  /** Live routing state, returned by management APIs only. */
+  runtime?: { active: number; limit: number; circuitUntil: string | null; halfOpen: boolean };
   hasAccountCredentials?: boolean;
   accountAuthMode?: 'password' | 'token' | 'cookie';
   accountIntegration?: AccountIntegration;

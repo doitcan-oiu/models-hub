@@ -15,6 +15,24 @@ import (
 )
 
 func (h *Handler) refresh(ctx context.Context) { _ = h.engine.Refresh(ctx) }
+
+func (h *Handler) channelResponse(channel Channel) Channel {
+	channel.Runtime = nil
+	if h.engine != nil {
+		channel.Runtime = h.engine.channelRuntimeState(channel.ID)
+	}
+	return channel
+}
+
+func (h *Handler) channelResponses(channels []Channel) []Channel {
+	// Store snapshots may be cached and shared with routing. Decorate copies only.
+	result := make([]Channel, len(channels))
+	for i, channel := range channels {
+		result[i] = h.channelResponse(channel)
+	}
+	return result
+}
+
 func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()
 	path := r.URL.Path
@@ -38,7 +56,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 			if err != nil {
 				return err
 			}
-			writeJSON(w, 200, map[string]any{"channels": channels, "keys": keys, "settings": settings, "tags": tags, "devMode": h.development(r)})
+			writeJSON(w, 200, map[string]any{"channels": h.channelResponses(channels), "keys": keys, "settings": settings, "tags": tags, "devMode": h.development(r)})
 			return nil
 		}
 	case "/api/settings":
@@ -70,7 +88,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 			if e != nil {
 				return e
 			}
-			writeJSON(w, 200, map[string]any{"channels": c})
+			writeJSON(w, 200, map[string]any{"channels": h.channelResponses(c)})
 			return nil
 		}
 		if method == "POST" {
@@ -83,7 +101,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 				return e
 			}
 			h.refresh(ctx)
-			writeJSON(w, 201, map[string]any{"channel": c})
+			writeJSON(w, 201, map[string]any{"channel": h.channelResponse(c)})
 			return nil
 		}
 	case "/api/channels/discover-models":
@@ -145,7 +163,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 			if e != nil {
 				return e
 			}
-			writeJSON(w, 201, map[string]any{"channels": channels})
+			writeJSON(w, 201, map[string]any{"channels": h.channelResponses(channels)})
 			return nil
 		}
 	case "/api/channels/bulk":
@@ -274,6 +292,9 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 			if e != nil {
 				return e
 			}
+			if channels, ok := data["channels"].([]Channel); ok {
+				data["channels"] = h.channelResponses(channels)
+			}
 			writeJSON(w, 200, data)
 			return nil
 		}
@@ -346,7 +367,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 			if e != nil {
 				return e
 			}
-			writeJSON(w, 200, map[string]any{"channels": channels})
+			writeJSON(w, 200, map[string]any{"channels": h.channelResponses(channels)})
 			return nil
 		}
 	}
@@ -367,7 +388,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 		if len(parts) == 3 {
 			switch method {
 			case "GET":
-				writeJSON(w, 200, map[string]any{"channel": c})
+				writeJSON(w, 200, map[string]any{"channel": h.channelResponse(c)})
 				return nil
 			case "PATCH":
 				b, e := readBody(w, r, 1<<20)
@@ -379,7 +400,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 					return e
 				}
 				h.refresh(ctx)
-				writeJSON(w, 200, map[string]any{"channel": c})
+				writeJSON(w, 200, map[string]any{"channel": h.channelResponse(c)})
 				return nil
 			case "DELETE":
 				if e = h.store.DeleteChannel(ctx, id); e != nil {
@@ -413,7 +434,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 						return e
 					}
 					h.refresh(ctx)
-					writeJSON(w, 201, map[string]any{"channel": c})
+					writeJSON(w, 201, map[string]any{"channel": h.channelResponse(c)})
 					return nil
 				}
 			case "balance":
@@ -423,7 +444,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 						return e
 					}
 					h.refresh(ctx)
-					writeJSON(w, 200, map[string]any{"channel": c})
+					writeJSON(w, 200, map[string]any{"channel": h.channelResponse(c)})
 					return nil
 				}
 			case "test", "recover":
@@ -448,7 +469,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 					if e != nil {
 						return e
 					}
-					writeJSON(w, 200, map[string]any{"channel": c})
+					writeJSON(w, 200, map[string]any{"channel": h.channelResponse(c)})
 					return nil
 				}
 			case "tests":
@@ -893,7 +914,7 @@ func (h *Handler) bulkChannels(w http.ResponseWriter, r *http.Request) error {
 	if e != nil {
 		return e
 	}
-	writeJSON(w, 200, map[string]any{"channels": channels})
+	writeJSON(w, 200, map[string]any{"channels": h.channelResponses(channels)})
 	return nil
 }
 func (h *Handler) testChannel(w http.ResponseWriter, r *http.Request, c Channel, b map[string]any) error {
@@ -958,7 +979,7 @@ func (h *Handler) testChannel(w http.ResponseWriter, r *http.Request, c Channel,
 	if e != nil {
 		return e
 	}
-	writeJSON(w, 200, map[string]any{"success": success, "requestId": requestID, "ttft": ttft / 1000, "duration": duration, "status": status, "error": problem, "attempts": attempts, "channel": channel})
+	writeJSON(w, 200, map[string]any{"success": success, "requestId": requestID, "ttft": ttft / 1000, "duration": duration, "status": status, "error": problem, "attempts": attempts, "channel": h.channelResponse(channel)})
 	return nil
 }
 

@@ -30,20 +30,30 @@ function cooldownDeadline(timestamp: number): string {
   return `冷却截止：${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}:${part('second')}（北京时间）`;
 }
 
-/** Presentation only: expiry does not restore a channel until the server confirms recovery. */
+/** Persisted health restrictions await recovery; fast circuits permit a request after expiry. */
 export function channelHealthView(channel: GatewayChannel, nowMs = Date.now()): ChannelHealthView {
   const cooldownUntil = channel.health.cooldownUntil;
   const deadline = cooldownUntil ? Date.parse(cooldownUntil) : NaN;
   const validDeadline = Number.isFinite(deadline);
   const coolingDown = validDeadline && deadline > nowMs;
-  const cooldownLabel = !cooldownUntil ? null : !validDeadline ? '冷却时间无效，等待恢复'
+  const circuitDeadline = Date.parse(channel.runtime?.circuitUntil ?? '');
+  const circuitCooling = Number.isFinite(circuitDeadline) && circuitDeadline > nowMs;
+  const halfOpen = channel.runtime?.halfOpen === true;
+  const runtimeBlocked = circuitCooling || halfOpen;
+  let cooldownLabel = !cooldownUntil ? null : !validDeadline ? '冷却时间无效，等待恢复'
     : coolingDown ? `冷却剩余 ${remainingTime(deadline - nowMs)}` : '冷却已结束，等待恢复';
+  let cooldownTitle = validDeadline ? cooldownDeadline(deadline) : undefined;
+  if (!cooldownUntil && circuitCooling && !halfOpen) {
+    cooldownLabel = `熔断剩余 ${remainingTime(circuitDeadline - nowMs)}`;
+    cooldownTitle = cooldownDeadline(circuitDeadline);
+  }
   const canReset = channel.enabled && !channel.archived
-    && (channel.status !== 'healthy' || channel.health.autoDisabled || !!cooldownUntil);
+    && (channel.status !== 'healthy' || channel.health.autoDisabled || !!cooldownUntil || runtimeBlocked);
 
   let label: string;
   let color: ChannelHealthView['color'];
   let fallbackReason: string;
+  let runtimeReason = false;
   if (channel.archived) {
     label = '已归档'; color = 'default'; fallbackReason = '渠道已归档，不参与路由';
   } else if (!channel.enabled) {
@@ -59,6 +69,15 @@ export function channelHealthView(channel: GatewayChannel, nowMs = Date.now()): 
   } else if (cooldownUntil) {
     label = coolingDown ? '冷却中' : '等待恢复'; color = 'warning';
     fallbackReason = coolingDown ? '渠道处于冷却期，暂不参与路由' : '冷却结束后仍需检测通过或手动恢复健康';
+  } else if (halfOpen) {
+    label = '恢复检测中'; color = 'warning'; runtimeReason = true;
+    fallbackReason = '熔断冷却已结束，正在验证请求是否恢复';
+  } else if (circuitCooling) {
+    label = '熔断冷却'; color = 'warning'; runtimeReason = true;
+    fallbackReason = '连续请求失败触发熔断，冷却结束后允许一次请求验证恢复';
+  } else if (channel.runtime && channel.runtime.limit > 0 && channel.runtime.active >= channel.runtime.limit) {
+    label = '并发已满'; color = 'warning'; runtimeReason = true;
+    fallbackReason = `正在处理 ${channel.runtime.active}/${channel.runtime.limit} 个请求，空闲后自动恢复接收`;
   } else if (channel.config.protocol !== 'mock' && channel.health.samples === 0) {
     label = '待检测'; color = 'default'; fallbackReason = '暂无健康检测记录';
   } else {
@@ -66,9 +85,9 @@ export function channelHealthView(channel: GatewayChannel, nowMs = Date.now()): 
   }
 
   return {
-    label, color, reason: channel.health.reason?.trim() || fallbackReason,
-    cooldownLabel, cooldownTitle: validDeadline ? cooldownDeadline(deadline) : undefined,
-    canReset, resetLabel: coolingDown ? '解除冷却' : '恢复健康',
+    label, color, reason: runtimeReason ? fallbackReason : channel.health.reason?.trim() || fallbackReason,
+    cooldownLabel, cooldownTitle,
+    canReset, resetLabel: coolingDown ? '解除冷却' : runtimeBlocked && !cooldownUntil && channel.status === 'healthy' && !channel.health.autoDisabled ? '解除熔断' : '恢复健康',
   };
 }
 
@@ -77,8 +96,10 @@ export function matchesChannelHealthStatus(channel: GatewayChannel, statuses: st
   if (!statuses.length) return true;
   const cooldownUntil = channel.health.cooldownUntil;
   const deadline = cooldownUntil ? Date.parse(cooldownUntil) : NaN;
+  const circuitDeadline = Date.parse(channel.runtime?.circuitUntil ?? '');
   return statuses.some(status => {
-    if (status === '冷却中') return Number.isFinite(deadline) && deadline > nowMs;
+    if (status === '冷却中') return Number.isFinite(deadline) && deadline > nowMs
+      || !channel.runtime?.halfOpen && Number.isFinite(circuitDeadline) && circuitDeadline > nowMs;
     if (status === '等待恢复') return !!cooldownUntil && (!Number.isFinite(deadline) || deadline <= nowMs);
     return status === channelHealthView(channel, nowMs).label;
   });

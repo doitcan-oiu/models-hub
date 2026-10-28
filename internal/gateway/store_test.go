@@ -75,7 +75,14 @@ func TestCacheSingleFlightAndInvalidation(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = s.cached(context.Background(), "channels", func() (any, error) { calls.Add(1); close(start); <-release; return "old", nil })
+		_, _ = s.cached(context.Background(), "channels", func() (any, error) {
+			if calls.Add(1) == 1 {
+				close(start)
+				<-release
+				return "old", nil
+			}
+			return "new", nil
+		})
 	}()
 	<-start
 	s.InvalidateCache()
