@@ -1,4 +1,5 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { createId } from '../../shared/id';
 import type { AttemptRecord, GatewayChannel, GatewayLog, MockScenario } from '../../shared/types';
 import { api } from '../api';
 import { modelsForProfile, usableApiKey } from '../access-policy';
@@ -87,7 +88,7 @@ export function usePlayground() {
     curlOpen: false, curlTab: 'export', importText: '', importError: '', imageBusy: false,
   });
   const messageList = ref<HTMLElement | null>(null);
-  let followOutput = true, threadId = crypto.randomUUID(), sequence = 0, epoch = 0, disposed = false;
+  let followOutput = true, threadId = createId(), sequence = 0, epoch = 0, disposed = false;
   let controller: AbortController | null = null;
   let imageReader: FileReader | null = null;
   const traceControllers = new Set<AbortController>();
@@ -153,7 +154,7 @@ export function usePlayground() {
       const user = [...state.messages].reverse().find(message => message.role === 'user');
       if (user) { state.input = user.content; state.image = user.image ?? null; }
     }
-    invalidateContext(); state.messages = []; state.budgetError = ''; threadId = crypto.randomUUID(); followOutput = true;
+    invalidateContext(); state.messages = []; state.budgetError = ''; threadId = createId(); followOutput = true;
   }
   async function loadTrace(id: string, assistantId: string, capturedEpoch: number) {
     const traceController = new AbortController(); traceControllers.add(traceController);
@@ -179,7 +180,7 @@ export function usePlayground() {
     if (!Number.isInteger(state.maxTokens) || state.maxTokens < 1 || state.maxTokens > 1000000) { consoleStore.notify('最大 token 数须为 1–1000000 的整数', 'error'); return; }
     if (!Number.isFinite(state.temperature) || state.temperature < 0 || state.temperature > 2) { consoleStore.notify('温度须为 0–2', 'error'); return; }
     const previous = [...state.messages];
-    const user: PlaygroundMessage = { id: crypto.randomUUID(), role: 'user', content: state.input.trim(), ...(state.image ? { image: state.image } : {}) };
+    const user: PlaygroundMessage = { id: createId(), role: 'user', content: state.input.trim(), ...(state.image ? { image: state.image } : {}) };
     if (!history && !user.content && !user.image) return;
     const historyToSend = history ? [...history] : [...state.messages, user];
     const request = modelRequest(historyToSend);
@@ -189,7 +190,7 @@ export function usePlayground() {
       state.budgetError = `当前请求为 ${sizeLabel(modelBytes)}，超过单次 2 MiB 上限。历史回复、系统提示和图片编码均计入大小；请开启新会话或缩小图片后发送，待发内容会保留。`; return;
     }
     state.budgetError = '';
-    const assistantId = crypto.randomUUID(), operation = ++sequence, capturedEpoch = epoch;
+    const assistantId = createId(), operation = ++sequence, capturedEpoch = epoch;
     const abort = new AbortController(); controller = abort; state.running = true; followOutput = true;
     state.messages = [...historyToSend, { id: assistantId, role: 'assistant', content: '', pending: true }];
     if (!history) { state.input = ''; state.image = null; }
@@ -329,12 +330,12 @@ export function usePlayground() {
           else throw new Error('包含不支持的消息内容类型');
         } else throw new Error('消息内容格式无效');
         if (message.role === 'system') { if (image) throw new Error('系统提示不支持图片'); prompts.push(content); }
-        else imported.push({ id: crypto.randomUUID(), role: message.role as 'user' | 'assistant', content, ...(image ? { image } : {}) });
+        else imported.push({ id: createId(), role: message.role as 'user' | 'assistant', content, ...(image ? { image } : {}) });
       }
       const temperature = body.temperature === undefined ? state.temperature : Number(body.temperature);
       const maxTokens = body.max_tokens === undefined ? state.maxTokens : Number(body.max_tokens);
       if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2 || !Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 1000000 || (body.stream !== undefined && typeof body.stream !== 'boolean')) throw new Error('生成参数不合法，请检查温度、最大 Token 和 stream');
-      invalidateContext(); threadId = crypto.randomUUID(); state.model = body.model; state.temperature = temperature; state.maxTokens = maxTokens;
+      invalidateContext(); threadId = createId(); state.model = body.model; state.temperature = temperature; state.maxTokens = maxTokens;
       if (body.stream !== undefined) state.stream = body.stream as boolean;
       state.system = prompts.join('\n\n'); state.input = ''; state.image = null; state.budgetError = '';
       const last = imported[imported.length - 1];

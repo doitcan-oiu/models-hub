@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { createId } from '../../../shared/id';
 import type { OverrideRow } from './channel-utils';
 const props = defineProps<{ modelValue: OverrideRow[]; headers?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: OverrideRow[]] }>();
-function add() { emit('update:modelValue', [...props.modelValue, { id: crypto.randomUUID(), key: '', type: 'string', value: '' }]); }
+function add() { emit('update:modelValue', [...props.modelValue, { id: createId(), key: '', type: 'string', value: '' }]); }
 function update(index: number, key: 'key' | 'value' | 'type', value: string) { emit('update:modelValue', props.modelValue.map((row, i) => i === index ? { ...row, [key]: value } as OverrideRow : row)); }
 </script>
 <template>

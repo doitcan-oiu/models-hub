@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useId } from 'vue';
+import { createId } from '../../../shared/id';
 import type { GatewayApiKey, GatewayChannel } from '../../../shared/types';
 import { api } from '../../api';
 import { editableRequestLimit } from '../../access-policy';
@@ -33,7 +34,7 @@ window.addEventListener('beforeunload', guard);
 onBeforeUnmount(() => { unregisterEditor(); window.removeEventListener('beforeunload', guard); });
 function close() { if (busy.value) return; if (dirty.value) discard.value = true; else emit('close'); }
 function addProfile(duplicate = false) {
-  const next = duplicate ? { ...clone(profile.value), id: crypto.randomUUID(), name: `${profile.value.name} 副本` } : blankProfile(`策略 ${draft.value.profiles.length + 1}`);
+  const next = duplicate ? { ...clone(profile.value), id: createId(), name: `${profile.value.name} 副本` } : blankProfile(`策略 ${draft.value.profiles.length + 1}`);
   draft.value.profiles.push(next); editingProfile.value = next.id;
 }
 function removeProfile() {

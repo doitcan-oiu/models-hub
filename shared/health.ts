@@ -1,4 +1,5 @@
 import type { AttemptRecord, GatewayChannel, GatewayEvent, GatewaySettings } from './types';
+import { createId } from './id';
 
 export type HealthDecision = { patch: Partial<GatewayChannel['health']>; status: GatewayChannel['status']; event?: GatewayEvent };
 
@@ -56,7 +57,7 @@ export function evaluateHealth(channel: GatewayChannel, settings: GatewaySetting
   else patch.averageDuration = duration;
   const decision: HealthDecision = { patch, status };
   if (status !== channel.status) decision.event = {
-    id: crypto.randomUUID(), createdAt: new Date(nowMs).toISOString(), time: new Date(nowMs).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }),
+    id: createId(), createdAt: new Date(nowMs).toISOString(), time: new Date(nowMs).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }),
     title: status === 'healthy' ? '渠道已恢复' : '渠道健康度下降', description: `${channel.name}：${reason || '连续检测通过，恢复参与路由'}`,
     type: status === 'healthy' ? 'recovery' : 'warning', channelId: channel.id,
   };

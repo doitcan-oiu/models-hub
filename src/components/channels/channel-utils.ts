@@ -1,4 +1,5 @@
 import type { ChannelConfig } from '../../../shared/types';
+import { createId } from '../../../shared/id';
 
 export function validateConfig(config: ChannelConfig, panel: string): ChannelConfig {
   const next: ChannelConfig = JSON.parse(JSON.stringify(config));
@@ -146,7 +147,7 @@ export function overridesToRows(
   headers = false,
 ): OverrideRow[] {
   return Object.entries(record).map(([key, value]) => ({
-    id: crypto.randomUUID(),
+    id: createId(),
     key,
     type:
       headers || typeof value === "string"
