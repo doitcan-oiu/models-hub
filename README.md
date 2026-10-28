@@ -17,7 +17,7 @@ Go + Vue 3 大模型网关，支持 SQLite、MySQL 和 PostgreSQL。
 docker compose up -d --build
 ```
 
-打开 [http://localhost:8787](http://localhost:8787)，按向导设置管理员密码、数据库和访问地址。默认使用 SQLite，无需创建 `.env`。
+打开 [http://localhost:8787](http://localhost:8787)，按向导设置管理员密码（至少 7 个字符）、数据库和访问地址。默认使用 SQLite，无需创建 `.env`。
 
 1. 添加渠道，填写上游地址、模型和上游密钥。
 2. 创建网关 API Key，保存生成的完整密钥。

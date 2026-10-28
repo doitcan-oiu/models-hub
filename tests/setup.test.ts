@@ -44,9 +44,15 @@ describe('first deployment configuration', () => {
     expect(databaseError(drafts.mysql)).not.toBe('');
   });
 
-  it('matches bcrypt UTF-8 limits and checks confirmation without trimming passwords', () => {
-    expect(passwordError('a'.repeat(11), 'a'.repeat(11))).not.toBe('');
-    expect(passwordError('a'.repeat(12), 'a'.repeat(12))).toBe('');
+  it('requires seven characters without complexity rules and preserves bcrypt limits and confirmation', () => {
+    expect(passwordError('123456', '123456')).not.toBe('');
+    expect(passwordError('1234567', '1234567')).toBe('');
+    expect(passwordError('a'.repeat(7), 'a'.repeat(7))).toBe('');
+    expect(passwordError('密'.repeat(6), '密'.repeat(6))).not.toBe('');
+    expect(passwordError('密'.repeat(7), '密'.repeat(7))).toBe('');
+    expect(passwordError('🔑'.repeat(6), '🔑'.repeat(6))).not.toBe('');
+    expect(passwordError('🔑'.repeat(7), '🔑'.repeat(7))).toBe('');
+    expect(passwordError('a'.repeat(72), 'a'.repeat(72))).toBe('');
     expect(passwordError('密'.repeat(24), '密'.repeat(24))).toBe('');
     expect(passwordError('密'.repeat(25), '密'.repeat(25))).not.toBe('');
     expect(passwordError('a'.repeat(73), 'a'.repeat(73))).not.toBe('');

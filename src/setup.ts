@@ -28,7 +28,7 @@ export function createDatabaseDrafts(defaults: SetupStatus['defaults'] = {}): Re
 
 export function passwordError(password: string, confirmation: string): string {
   const bytes = new TextEncoder().encode(password).length;
-  if (bytes < 12) return '管理员密码至少需要 12 个字节（英文或数字为 1 个字节）。';
+  if ([...password].length < 7) return '管理员密码至少需要 7 个字符。';
   if (bytes > 72) return '管理员密码不能超过 72 个字节。';
   if (!password.trim()) return '管理员密码不能全部为空格。';
   if (password !== confirmation) return '两次输入的管理员密码不一致。';

@@ -90,7 +90,7 @@ async function initialize() {
         <v-form :disabled="locked" novalidate @submit.prevent="step < 2 ? advance() : initialize()">
           <fieldset :disabled="locked" class="setup-fields">
             <div v-if="step === 0" class="setup-section">
-              <v-text-field v-model="adminPassword" autofocus label="管理员密码" :type="reveal ? 'text' : 'password'" autocomplete="new-password" prepend-inner-icon="mdi-lock-outline" hint="至少 12 个字节，最多 72 个字节；建议混合字母、数字和符号。" persistent-hint required>
+              <v-text-field v-model="adminPassword" autofocus label="管理员密码" :type="reveal ? 'text' : 'password'" autocomplete="new-password" prepend-inner-icon="mdi-lock-outline" hint="至少 7 个字符，支持纯数字。" persistent-hint required>
                 <template #append-inner><v-btn :icon="reveal ? 'mdi-eye-off-outline' : 'mdi-eye-outline'" :aria-label="reveal ? '隐藏密码' : '显示密码'" variant="text" size="x-small" :disabled="locked" @click="reveal = !reveal" /></template>
               </v-text-field>
               <v-text-field v-model="confirmation" label="再次输入管理员密码" :type="reveal ? 'text' : 'password'" autocomplete="new-password" prepend-inner-icon="mdi-lock-check-outline" required />

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -504,8 +505,8 @@ func (a *Application) setup(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if r.URL.Path == "/api/setup" {
-		if len(input.AdminPassword) < 12 || len(input.AdminPassword) > 72 || strings.TrimSpace(input.AdminPassword) == "" {
-			return bad("管理员密码须为 12–72 字节，且不能全为空格")
+		if utf8.RuneCountInString(input.AdminPassword) < 7 || len(input.AdminPassword) > 72 || strings.TrimSpace(input.AdminPassword) == "" {
+			return bad("管理员密码至少 7 个字符，最多 72 字节，且不能全为空白")
 		}
 		if input.AdminPassword != input.ConfirmPassword {
 			return bad("两次输入的管理员密码不一致")

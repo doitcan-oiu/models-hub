@@ -16,7 +16,7 @@ docker compose logs -f gateway
 
 打开 [http://localhost:8787](http://localhost:8787)，页面会进入初始化向导：
 
-1. 设置管理员密码并再次确认，长度为 12–72 个 UTF-8 字节。
+1. 设置管理员密码并再次确认，至少 7 个字符，支持纯数字。
 2. 选择 SQLite、MySQL 或 PostgreSQL，填写数据库信息，可先测试连接。
 3. 确认浏览器访问地址并初始化。程序自动建表、生成加密密钥，同源地址下自动登录。
 

@@ -98,6 +98,7 @@ func TestSetupSQLiteLifecyclePersistsPasswordAndSessionAcrossRestart(t *testing.
 	cfg := applicationTestConfig(t)
 	application := newTestApplication(t, cfg)
 	input := setupInput()
+	input.AdminPassword, input.ConfirmPassword = "1234567", "1234567"
 	probe := setupHTTP(application, "POST", "/api/setup/test-database", map[string]any{"database": input.Database})
 	if probe.Code != 200 {
 		t.Fatalf("connection test: %d %s", probe.Code, probe.Body.String())
@@ -236,8 +237,21 @@ func TestSetupRejectsCrossOriginAndMalformedCredentialsBeforePersistence(t *test
 	application := newTestApplication(t, cfg)
 	for _, change := range []func(*setupRequest){
 		func(input *setupRequest) { input.AdminPassword = "short"; input.ConfirmPassword = "short" },
+		func(input *setupRequest) { input.AdminPassword = "123456"; input.ConfirmPassword = "123456" },
+		func(input *setupRequest) {
+			input.AdminPassword = "一二三四五六"
+			input.ConfirmPassword = input.AdminPassword
+		},
+		func(input *setupRequest) {
+			input.AdminPassword = strings.Repeat("\u3000", 7)
+			input.ConfirmPassword = input.AdminPassword
+		},
 		func(input *setupRequest) {
 			input.AdminPassword = strings.Repeat("x", 73)
+			input.ConfirmPassword = input.AdminPassword
+		},
+		func(input *setupRequest) {
+			input.AdminPassword = strings.Repeat("一", 25)
 			input.ConfirmPassword = input.AdminPassword
 		},
 		func(input *setupRequest) { input.ConfirmPassword = "different-password" },
@@ -304,6 +318,7 @@ func TestSetupAcceptsSameHostHTTPSOriginBehindTLSReverseProxy(t *testing.T) {
 	cfg := applicationTestConfig(t)
 	application := newTestApplication(t, cfg)
 	input := setupInput()
+	input.AdminPassword, input.ConfirmPassword = "一二三四五六七", "一二三四五六七"
 	publicURL := "https://gateway.test:9443"
 	content, _ := json.Marshal(input)
 	// The proxy has terminated TLS and preserved the external Host header.
