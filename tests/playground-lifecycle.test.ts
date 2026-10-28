@@ -123,3 +123,61 @@ describe('playground cURL handling', () => {
     expect(playground.state.importError).toBe('');
   });
 });
+
+describe('playground channel protocols', () => {
+  it.each(['anthropic', 'gemini'] as const)('blocks %s native requests through send, retry and resend while preserving the conversation', async protocol => {
+    const { useConsole } = await import('../src/composables/useConsole');
+    const store = useConsole();
+    store.channels.value[0].config.protocol = protocol;
+    playground.state.mode = 'channel';
+    playground.state.input = 'unsent draft';
+    const messages = [{ id: 'question', role: 'user' as const, content: 'previous question' }, { id: 'answer', role: 'assistant' as const, content: 'previous answer' }];
+    playground.state.messages = messages;
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    await nextTick();
+
+    expect(playground.protocolError.value).toContain('当前测试场仅支持 OpenAI 兼容接口');
+    expect(playground.protocolError.value).toContain('对应客户端或渠道测试');
+    expect(playground.canSend.value).toBe(false);
+    await playground.send();
+    playground.retry();
+    playground.resend('answer');
+    await nextTick();
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(playground.state.messages).toEqual(messages);
+    expect(playground.state.input).toBe('unsent draft');
+    expect(playground.state.running).toBe(false);
+    expect(store.snackbar.value).toMatchObject({ color: 'error', text: playground.protocolError.value });
+
+    playground.state.mode = 'gateway';
+    expect(playground.protocolError.value).toBe('');
+    expect(playground.canSend.value).toBe(true);
+  });
+
+  it.each(['openai', 'mock'] as const)('sends through %s channels after switching away from a native channel', async protocol => {
+    const { useConsole } = await import('../src/composables/useConsole');
+    const store = useConsole();
+    playground.state.mode = 'channel';
+    playground.state.input = 'hello';
+    store.channels.value[0].config.protocol = 'anthropic';
+    expect(playground.canSend.value).toBe(false);
+    store.channels.value[0].config.protocol = protocol;
+    const fetch = vi.fn(async (url: string) => {
+      if (url === '/api/playground/chat') return Response.json({ choices: [{ message: { content: 'reply' } }] });
+      if (url === '/api/bootstrap') return Response.json({ channels: store.channels.value, keys: store.keys.value, tags: [], settings: store.settings.value });
+      if (url === '/api/events') return Response.json({ events: [] });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    expect(playground.protocolError.value).toBe('');
+    expect(playground.canSend.value).toBe(true);
+    await playground.send();
+
+    expect(fetch).toHaveBeenCalledWith('/api/playground/chat', expect.objectContaining({ method: 'POST' }));
+    expect(playground.state.messages.map(message => message.content)).toEqual(['hello', 'reply']);
+    expect(playground.state.messages.every(message => !message.pending && !message.error)).toBe(true);
+  });
+});

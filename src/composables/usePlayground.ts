@@ -106,7 +106,9 @@ export function usePlayground() {
   });
   const latestResponse = computed(() => [...state.messages].reverse().find(message => message.role === 'assistant'));
   const latestTrace = computed(() => latestResponse.value?.trace?.log);
-  const canSend = computed(() => !state.running && !state.fixtureBusy && !state.imageBusy && Boolean(state.model && (state.input.trim() || state.image)));
+  const protocolError = computed(() => state.mode === 'channel' && ['anthropic', 'gemini'].includes(channel.value?.config.protocol ?? '')
+    ? '当前测试场仅支持 OpenAI 兼容接口；Anthropic / Gemini 原生接口请使用对应客户端或渠道测试。' : '');
+  const canSend = computed(() => !state.running && !state.fixtureBusy && !state.imageBusy && !protocolError.value && Boolean(state.model && (state.input.trim() || state.image)));
   const modelRequest = (history: PlaygroundMessage[]) => ({
     model: state.model,
     messages: [
@@ -174,6 +176,7 @@ export function usePlayground() {
   }
   async function send(history?: PlaygroundMessage[]) {
     if (state.running || controller || state.fixtureBusy || state.imageBusy) return;
+    if (protocolError.value) { consoleStore.notify(protocolError.value, 'error'); return; }
     if (!state.model || !models.value.includes(state.model) || (state.mode === 'channel' ? !channel.value || channel.value.archived : !key.value || !usableApiKey(key.value))) {
       consoleStore.notify(state.mode === 'channel' ? '请选择渠道和模型' : '请先创建可用 API Key 并选择模型', 'error'); return;
     }
@@ -350,7 +353,7 @@ export function usePlayground() {
     const link = document.createElement('a'); link.href = url; link.download = `pulsegate-conversation-${Date.now()}.json`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   onBeforeUnmount(() => { disposed = true; cancelCurrent(); invalidateContext(); });
-  return { state, activeChannels, activeKeys, channel, key, models, devMode, latestResponse, latestTrace, canSend, curl, messageList,
+  return { state, activeChannels, activeKeys, channel, key, models, devMode, latestResponse, latestTrace, protocolError, canSend, curl, messageList,
     send, stop, retry, resend, resetConversation, trackScroll, attach, installFixtures, saveScenario, changeScenario, importCurl, downloadConversation,
     copy: consoleStore.copy, notify: consoleStore.notify };
 }

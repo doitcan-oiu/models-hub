@@ -16,6 +16,9 @@ import (
 type engineObservation struct {
 	bytes            []byte
 	meaningful, done bool
+	modelOutput      bool
+	complete         bool
+	invalidJSON      bool
 	failure          string
 	input, output    int64
 }
@@ -36,15 +39,18 @@ func observeEngineJSON(data []byte, model string, rewrite bool, event string) en
 	trimmed := bytes.TrimSpace(data)
 	if bytes.Equal(trimmed, []byte("[DONE]")) {
 		o.done = true
+		o.complete = true
 		return o
 	}
 	var value any
 	if json.Unmarshal(data, &value) != nil {
+		o.invalidJSON = len(trimmed) > 0
 		o.meaningful = len(trimmed) > 0
 		return o
 	}
 	m := asEngineObject(value)
 	if m == nil {
+		o.invalidJSON = true
 		o.meaningful = enginePayload(value)
 		return o
 	}
@@ -52,6 +58,8 @@ func observeEngineJSON(data []byte, model string, rewrite bool, event string) en
 	if typeName == "" {
 		typeName = event
 	}
+	o.modelOutput = engineModelOutput(m, typeName)
+	o.complete = engineModelCompletion(m, typeName)
 	response := asEngineObject(m["response"])
 	if errValue := m["error"]; errValue != nil {
 		o.failure = engineDiagnostic(errValue)
@@ -172,6 +180,86 @@ func observeEngineJSON(data []byte, model string, rewrite bool, event string) en
 		}
 	}
 	return o
+}
+
+// Probes must verify model output rather than accepting an HTTP 200 login page,
+// vendor error object or stream metadata as a healthy inference response. Keep
+// this separate from the permissive observation used by ordinary passthrough.
+func engineModelOutput(m map[string]any, typeName string) bool {
+	if choices, ok := m["choices"]; ok {
+		for _, choice := range asEngineArray(choices) {
+			c := asEngineObject(choice)
+			if engineBlock(c["delta"]) || engineBlock(c["message"]) {
+				return true
+			}
+		}
+		return false
+	}
+	if candidates, ok := m["candidates"]; ok {
+		for _, candidate := range asEngineArray(candidates) {
+			if engineBlock(asEngineObject(candidate)["content"]) {
+				return true
+			}
+		}
+		return false
+	}
+	if asEngineString(m["object"]) == "response" {
+		return engineProbeResponseOutput(m["output"]) || asEngineString(m["output_text"]) != ""
+	}
+	switch typeName {
+	case "message":
+		return engineBlock(m["content"])
+	case "message_start":
+		return engineBlock(asEngineObject(m["message"])["content"])
+	case "content_block_start":
+		return engineBlock(m["content_block"])
+	case "content_block_delta":
+		return engineBlock(m["delta"])
+	case "response.output_text.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta", "response.refusal.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+		return engineBlock(m["delta"])
+	case "response.output_item.added", "response.output_item.done":
+		return engineProbeResponseOutput(m["item"])
+	case "response.content_part.added", "response.content_part.done", "response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
+		return engineProbeResponseOutput(m["part"])
+	case "response.completed", "response.incomplete":
+		response := asEngineObject(m["response"])
+		return engineProbeResponseOutput(response["output"]) || asEngineString(response["output_text"]) != ""
+	}
+	return false
+}
+
+func engineProbeResponseOutput(v any) bool {
+	if items, ok := v.([]any); ok {
+		for _, item := range items {
+			if engineProbeResponseOutput(item) {
+				return true
+			}
+		}
+		return false
+	}
+	m := asEngineObject(v)
+	if asEngineString(m["type"]) == "reasoning" {
+		return engineResponseOutput(m["summary"]) || engineResponseOutput(m["content"])
+	}
+	return engineResponseOutput(v)
+}
+
+func engineModelCompletion(m map[string]any, typeName string) bool {
+	switch typeName {
+	case "message_stop", "response.completed", "response.incomplete":
+		return true
+	}
+	for _, choice := range asEngineArray(m["choices"]) {
+		if asEngineString(asEngineObject(choice)["finish_reason"]) != "" {
+			return true
+		}
+	}
+	for _, candidate := range asEngineArray(m["candidates"]) {
+		if asEngineString(asEngineObject(candidate)["finishReason"]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func engineDiagnostic(v any) string {
@@ -370,14 +458,16 @@ func observeEngineFrame(frame []byte, model string, rewrite bool) engineObservat
 	return o
 }
 
-func (e *Engine) streamAttempt(w http.ResponseWriter, r *http.Request, response *http.Response, c engineCandidate, model string, s Settings, id string, number int, began time.Time, cancel context.CancelFunc, firstTimer *time.Timer, credential Credential) attemptResult {
+func (e *Engine) streamAttempt(w http.ResponseWriter, r *http.Request, response *http.Response, c engineCandidate, model string, s Settings, id string, number int, began time.Time, cancel context.CancelFunc, firstTimer *time.Timer, credential Credential, probe bool) attemptResult {
 	result := attemptResult{status: response.StatusCode, header: response.Header, retry: true}
 	idleReader := &engineIdleReader{body: response.Body, idleDuration: e.cfg.StreamIdleTimeout}
 	reader := bufio.NewReaderSize(idleReader, 32<<10)
 	prefix := make([][]byte, 0, 4)
 	size := 0
 	terminal := false
+	complete := false
 	observe := func(o engineObservation) {
+		complete = complete || o.complete
 		if o.input > 0 {
 			result.input = o.input
 		}
@@ -388,7 +478,7 @@ func (e *Engine) streamAttempt(w http.ResponseWriter, r *http.Request, response 
 	for {
 		frame, err := readEngineFrame(reader)
 		if err != nil {
-			if errors.Is(err, io.EOF) && !s.EmptyResponseDetection {
+			if errors.Is(err, io.EOF) && !s.EmptyResponseDetection && !probe {
 				break
 			}
 			result.status = 502
@@ -400,6 +490,14 @@ func (e *Engine) streamAttempt(w http.ResponseWriter, r *http.Request, response 
 			return result
 		}
 		o := observeEngineFrame(frame, model, c.model != model)
+		if probe {
+			o.meaningful = o.modelOutput
+			if o.invalidJSON {
+				result.status = 502
+				result.err = errors.New("上游探测返回无效的模型 SSE 数据")
+				return result
+			}
+		}
 		observe(o)
 		size += len(o.bytes)
 		if size > 1<<20 {
@@ -420,7 +518,7 @@ func (e *Engine) streamAttempt(w http.ResponseWriter, r *http.Request, response 
 			break
 		}
 		if terminal {
-			if s.EmptyResponseDetection {
+			if s.EmptyResponseDetection || probe {
 				result.status = 502
 				result.err = errors.New("上游流结束但未返回有效内容")
 				return result
@@ -465,6 +563,10 @@ func (e *Engine) streamAttempt(w http.ResponseWriter, r *http.Request, response 
 		frame, err := readEngineFrame(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				if probe && !complete {
+					result.status = 502
+					result.err = errors.New("上游流提前结束，未收到完成标记")
+				}
 				return result
 			}
 			result.status = 502
@@ -478,6 +580,11 @@ func (e *Engine) streamAttempt(w http.ResponseWriter, r *http.Request, response 
 		idle.Reset(e.cfg.StreamIdleTimeout)
 		o := observeEngineFrame(frame, model, c.model != model)
 		observe(o)
+		if probe && o.invalidJSON {
+			result.status = 502
+			result.err = errors.New("上游探测返回无效的模型 SSE 数据")
+			return result
+		}
 		if o.failure != "" {
 			result.status = 502
 			result.err = fmt.Errorf("上游流错误: %s", redactEngineString(o.failure, credential.Secret))

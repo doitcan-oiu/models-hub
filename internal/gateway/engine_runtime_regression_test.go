@@ -134,7 +134,7 @@ func TestEngineGeminiStreamProbeRequestsSSE(t *testing.T) {
 			t.Error("Gemini stream probe omitted alt=sse")
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]},\"finishReason\":\"STOP\"}]}\n\n")
 	}))
 	defer upstream.Close()
 	c := testEngineChannel("gemini", upstream.URL, "test", 0)

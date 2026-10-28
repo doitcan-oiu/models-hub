@@ -287,8 +287,12 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) error {
 			force := ""
 			if str(b, "mode") == "channel" {
 				force = str(b, "channelId")
-				if _, e = h.store.Channel(ctx, force); e != nil {
-					return e
+				channel, err := h.store.Channel(ctx, force)
+				if err != nil {
+					return err
+				}
+				if channel.Config.Protocol == "anthropic" || channel.Config.Protocol == "gemini" {
+					return bad("当前测试场仅支持 OpenAI 兼容接口；Anthropic/Gemini 原生渠道请使用对应客户端或渠道测试")
 				}
 			} else if id := str(b, "keyId"); id != "" {
 				k, e := h.store.Key(ctx, id)
@@ -895,7 +899,8 @@ func (h *Handler) bulkChannels(w http.ResponseWriter, r *http.Request) error {
 func (h *Handler) testChannel(w http.ResponseWriter, r *http.Request, c Channel, b map[string]any) error {
 	probeContext, cancelProbe := context.WithTimeout(r.Context(), 40*time.Second)
 	defer cancelProbe()
-	r = r.WithContext(probeContext)
+	outcome := &engineProbeOutcome{}
+	r = r.WithContext(context.WithValue(probeContext, engineProbeContextKey{}, outcome))
 	model := str(b, "model")
 	if model == "" {
 		model = c.Model
@@ -926,21 +931,27 @@ func (h *Handler) testChannel(w http.ResponseWriter, r *http.Request, c Channel,
 	requestID := recorder.Header().Get("X-Pulsegate-Request-Id")
 	ttft, _ := strconv.ParseFloat(recorder.Header().Get("X-Pulsegate-Ttft-Ms"), 64)
 	status := recorder.status
+	if outcome.status != 0 {
+		status = outcome.status
+	}
 	duration := time.Since(start).Seconds()
 	attempts := []Attempt{}
-	success := status >= 200 && status < 300 && !strings.Contains(recorder.body.String(), `"error"`)
+	// Streaming may have already sent HTTP 200 before an error occurs, and log
+	// persistence can fail independently. The engine outcome is authoritative.
+	success := outcome.status >= 200 && outcome.status < 300 && outcome.err == nil
 	var problem any
+	if outcome.err != nil {
+		problem = redactText(outcome.err.Error())
+	}
 	if log, details, err := h.store.Log(r.Context(), requestID); err == nil {
-		status = log.Status
 		duration = log.Duration
 		ttft = log.TTFT * 1000
 		attempts = details
-		success = log.Result != "error" && log.Status >= 200 && log.Status < 300
-		if log.Error != nil {
+		if problem == nil && log.Error != nil {
 			problem = *log.Error
 		}
 	}
-	if !success {
+	if !success && problem == nil {
 		problem = "上游测试失败，请查看请求日志"
 	}
 	channel, e := h.store.Channel(r.Context(), c.ID)
@@ -954,16 +965,11 @@ func (h *Handler) testChannel(w http.ResponseWriter, r *http.Request, c Channel,
 type adminProbeWriter struct {
 	headers http.Header
 	status  int
-	body    bytes.Buffer
 }
 
 func (w *adminProbeWriter) Header() http.Header    { return w.headers }
 func (w *adminProbeWriter) WriteHeader(status int) { w.status = status }
 func (w *adminProbeWriter) Write(data []byte) (int, error) {
-	n := len(data)
-	if w.body.Len() < 64<<10 {
-		_, _ = w.body.Write(data[:min(n, (64<<10)-w.body.Len())])
-	}
-	return n, nil
+	return len(data), nil
 }
 func (w *adminProbeWriter) Flush() {}

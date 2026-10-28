@@ -9,6 +9,8 @@ Go + Vue 3 大模型网关，支持 SQLite、MySQL 和 PostgreSQL。
 
 支持 OpenAI Chat Completions / Responses、Anthropic Messages 和 Gemini 原生接口。客户端协议需与渠道匹配。
 
+测试场使用 OpenAI Chat 格式；Anthropic / Gemini 原生渠道请通过渠道测试验证，实际调用使用对应客户端。
+
 ## 快速部署
 
 需要 Docker 和 Docker Compose：

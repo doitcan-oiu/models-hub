@@ -928,7 +928,7 @@ func (e *Engine) attempt(w http.ResponseWriter, r *http.Request, c engineCandida
 	}
 	stream = strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")
 	if stream {
-		return e.streamAttempt(w, r, response, c, clientModel, s, id, number, began, cancel, firstTimer, credential), credential
+		return e.streamAttempt(w, r, response, c, clientModel, s, id, number, began, cancel, firstTimer, credential, source == "probe"), credential
 	}
 	data, readErr := readEngineBounded(response.Body, 8<<20)
 	if readErr != nil {
@@ -953,7 +953,12 @@ func (e *Engine) attempt(w http.ResponseWriter, r *http.Request, c engineCandida
 		result.retry = true
 		return
 	}
-	if s.EmptyResponseDetection && !observed.meaningful && response.StatusCode != 204 && response.StatusCode != 205 {
+	if source == "probe" && !observed.modelOutput {
+		result.status = http.StatusBadGateway
+		result.err = errors.New("上游探测未返回可识别的模型输出")
+		return
+	}
+	if source != "probe" && s.EmptyResponseDetection && !observed.meaningful && response.StatusCode != 204 && response.StatusCode != 205 {
 		result.status = 502
 		result.err = errors.New("上游返回空内容")
 		return

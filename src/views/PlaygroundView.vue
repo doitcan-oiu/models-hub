@@ -6,7 +6,7 @@ import PlaygroundMessage from '../components/playground/PlaygroundMessage.vue';
 import { scenarioItems, usePlayground } from '../composables/usePlayground';
 import { useConsole } from '../composables/useConsole';
 
-const { state, activeChannels, activeKeys, channel, key, models, devMode, latestTrace, canSend, curl, messageList,
+const { state, activeChannels, activeKeys, channel, key, models, devMode, latestTrace, protocolError, canSend, curl, messageList,
   send, stop, retry, resend, resetConversation, trackScroll, attach, installFixtures, saveScenario, changeScenario,
   importCurl, downloadConversation, copy } = usePlayground();
 const { refresh, loading: refreshing } = useConsole();
@@ -37,7 +37,6 @@ function newConversation() { resetConversation(); }
         <v-select v-else v-model="state.keyId" :items="activeKeys" item-title="name" item-value="id" label="网关 API Key" placeholder="选择访问凭证" :disabled="state.running || state.fixtureBusy" hide-details density="compact" variant="outlined" no-data-text="暂无可用 API Key" />
         <v-autocomplete v-model="state.model" :items="models" label="模型" placeholder="选择模型" :disabled="state.running || state.fixtureBusy" hide-details density="compact" variant="outlined" no-data-text="当前连接没有授权模型" auto-select-first />
         <p class="control-note">{{ state.mode === 'gateway' ? `按凭证当前策略授权并自动调度${keyProfile ? ` · ${keyProfile}` : ''}。` : '直接验证选定渠道，不经过网关 Key 的路由策略。' }}</p>
-        <v-alert v-if="state.mode === 'channel' && channel && ['anthropic', 'gemini'].includes(channel.config.protocol)" type="warning" variant="tonal" density="compact" class="protocol-note">发送 OpenAI Chat Completions 格式，仅适用于兼容入口；{{ channel.config.protocol === 'anthropic' ? 'Anthropic' : 'Gemini' }} 原生接口请使用对应客户端。</v-alert>
       </div>
       <v-divider />
       <v-expansion-panels :model-value="state.controlsExpanded ? 'parameters' : undefined" variant="accordion" class="parameter-panels" elevation="0" @update:model-value="state.controlsExpanded = $event === 'parameters'">
@@ -79,7 +78,7 @@ function newConversation() { resetConversation(); }
         <div class="chat-title"><v-avatar color="primary" variant="tonal" size="28"><v-icon icon="mdi-message-processing-outline" size="18" /></v-avatar><div><h2>对话工作台</h2><p><span>POST</span> /v1/chat/completions</p></div></div>
         <div class="chat-actions">
           <span v-if="userCount" class="conversation-count">{{ userCount }} 次对话</span>
-          <v-btn icon="mdi-refresh" variant="text" size="small" title="重试最后一条" aria-label="重试最后一条" :disabled="state.running || !userCount" @click="retry" />
+          <v-btn icon="mdi-refresh" variant="text" size="small" title="重试最后一条" aria-label="重试最后一条" :disabled="state.running || !userCount || Boolean(protocolError)" @click="retry" />
           <v-btn icon="mdi-chat-plus-outline" variant="text" size="small" title="新会话，保留输入草稿" aria-label="开启新会话" :disabled="state.running || !state.messages.length" @click="newConversation" />
           <v-menu><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-dots-horizontal" variant="text" size="small" aria-label="更多测试操作" /></template><v-list density="compact"><v-list-item prepend-icon="mdi-import" title="导入 cURL / JSON" :disabled="state.running" @click="openCurl('import')" /><v-list-item prepend-icon="mdi-code-json" title="导出网关 cURL" @click="openCurl('export')" /><v-list-item prepend-icon="mdi-download-outline" title="导出对话 JSON" :disabled="!state.messages.length" @click="downloadConversation" /></v-list></v-menu>
         </div>
@@ -90,6 +89,7 @@ function newConversation() { resetConversation(); }
         <PlaygroundMessage v-for="message in state.messages" :key="message.id" :message="message" :running="state.running" @copy="copy" @resend="resend" />
       </div>
       <form class="playground-composer" @submit.prevent="send()">
+        <v-alert v-if="protocolError" type="warning" variant="tonal" density="compact" class="mb-3">{{ protocolError }}</v-alert>
         <v-alert v-if="state.budgetError" type="warning" variant="tonal" density="compact" class="mb-3"><p>{{ state.budgetError }}</p><v-btn v-if="state.messages.length" size="small" variant="text" :disabled="state.running" class="mt-2" @click="newConversation">开启新会话，保留待发内容</v-btn></v-alert>
         <div v-if="state.image" class="draft-image"><v-img :src="state.image" alt="待发送图片" width="46" height="40" contain /><span>图片已附加</span><v-btn icon="mdi-close" variant="text" size="x-small" aria-label="移除图片" :disabled="state.running" @click="state.image = null; state.budgetError = ''" /></div>
         <v-textarea v-model="state.input" label="输入消息" placeholder="Enter 发送，Shift + Enter 换行" :disabled="state.running" rows="2" max-rows="7" auto-grow variant="solo-filled" flat hide-details class="composer-input" @update:model-value="state.budgetError = ''" @keydown="onMessageKey" />
