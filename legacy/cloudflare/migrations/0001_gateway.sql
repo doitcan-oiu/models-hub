@@ -1,0 +1,17 @@
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, data TEXT NOT NULL, health_version INTEGER NOT NULL DEFAULT 0, fixture INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, label TEXT NOT NULL, preview TEXT NOT NULL, secret TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, failure_count INTEGER NOT NULL DEFAULT 0, recovery_count INTEGER NOT NULL DEFAULT 0, disabled_at TEXT, reason TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS credentials_channel ON credentials(channel_id);
+CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, data TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS profile_usage (key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE, profile_id TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(key_id, profile_id));
+CREATE TABLE IF NOT EXISTS settings (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tags (name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, request_id TEXT NOT NULL, channel_id TEXT NOT NULL, stream INTEGER NOT NULL, started_at TEXT NOT NULL, data TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS attempts_window ON attempts(channel_id, stream, started_at DESC);
+CREATE INDEX IF NOT EXISTS attempts_request ON attempts(request_id, started_at);
+CREATE TABLE IF NOT EXISTS request_logs (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, channel_id TEXT, result TEXT NOT NULL, source TEXT NOT NULL, model TEXT NOT NULL, data TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS logs_time ON request_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS logs_channel ON request_logs(channel_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS gateway_state (id TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER);
+CREATE TABLE IF NOT EXISTS admin_sessions (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, auth_hash TEXT NOT NULL);

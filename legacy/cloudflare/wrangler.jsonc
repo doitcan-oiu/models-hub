@@ -1,0 +1,54 @@
+// ADMIN_TOKEN 和 ENCRYPTION_KEY 请通过 wrangler secret put 配置。
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pulsegate",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-06",
+  "workers_dev": true,
+  "compatibility_flags": [
+    "nodejs_compat",
+    "enable_request_signal"
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+      "/v1/*",
+      "/health"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pulsegate-db",
+      "migrations_dir": "migrations",
+      "database_id": "e7daadc9-399f-4290-92ae-504eeb227923"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GATEWAY_STATE",
+        "class_name": "GatewayState"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "GatewayState"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "vars": {
+    "DEV_MODE": "false"
+  }
+}

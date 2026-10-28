@@ -1,0 +1,35 @@
+{
+  "name": "pulsegate",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "setup:local": "node scripts/local-env.mjs",
+    "dev": "concurrently -k -n frontend,backend \"npm:dev:frontend\" \"npm:dev:backend\"",
+    "dev:frontend": "vite --host 127.0.0.1",
+    "dev:backend": "go run ./cmd/pulsegate",
+    "build:frontend": "vue-tsc --noEmit && vite build",
+    "build": "npm run build:frontend && go build -o bin/pulsegate ./cmd/pulsegate",
+    "test": "vitest run",
+    "preview": "vite preview --host 127.0.0.1",
+    "test:go": "go test ./...",
+    "test:race": "go test -race ./...",
+    "deploy": "docker compose up -d --build"
+  },
+  "dependencies": {
+    "@mdi/font": "^7.4.47",
+    "chart.js": "^4.5.1",
+    "vue": "^3.5.44",
+    "vue-chartjs": "^5.3.4",
+    "vuetify": "^4.2.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "concurrently": "^10.0.6",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.7",
+    "vite-plugin-vuetify": "^2.1.3",
+    "vitest": "^4.1.12",
+    "vue-tsc": "^3.3.13"
+  }
+}

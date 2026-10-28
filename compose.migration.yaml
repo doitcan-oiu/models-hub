@@ -1,0 +1,5 @@
+# Only for one-shot D1 imports. The file contains SOURCE_ENCRYPTION_KEY.
+services:
+  gateway:
+    env_file:
+      - .migration.env

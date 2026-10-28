@@ -1,0 +1,32 @@
+# Optional bundled MySQL. Fill MYSQL_PASSWORD in .env first.
+services:
+  gateway:
+    depends_on:
+      mysql:
+        condition: service_healthy
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: pulsegate
+      MYSQL_USER: pulsegate
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}"
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u pulsegate -D pulsegate -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+      start_period: 30s
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
+
+volumes:
+  mysql_data:
