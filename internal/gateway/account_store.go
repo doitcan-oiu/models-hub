@@ -367,9 +367,9 @@ func (i *Integrations) refreshCredential(ctx context.Context, channelID, id stri
 		return nil
 	}
 	var currentData []byte
-	// The channel is already protected by a shared lock. Lock only this key and
-	// then its lease: upgrading the shared channel lock here would deadlock
-	// concurrent completions for different keys of the same channel.
+	// The channel is already locked (shared on PostgreSQL, exclusive on MySQL).
+	// Lock only this key and then its lease: upgrading PostgreSQL's shared
+	// channel lock here would deadlock concurrent completions for different keys.
 	err = tx.QueryRowContext(ctx, `SELECT data FROM credentials WHERE id=$1 AND channel_id=$2 AND secret=$3 FOR UPDATE`, id, channelID, claim.ciphertext).Scan(&currentData)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil

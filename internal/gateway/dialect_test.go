@@ -38,6 +38,29 @@ func TestDialectBindingAndJSON(t *testing.T) {
 	}
 }
 
+func TestDialectRowLockCompatibility(t *testing.T) {
+	const query = "SELECT data FROM channels WHERE id=$1"
+	for _, clause := range []string{" FOR SHARE", " for share", " FOR\nSHARE", " LOCK IN SHARE MODE", " FOR UPDATE", " FOR UPDATE OF k,b"} {
+		t.Run(strings.TrimSpace(clause), func(t *testing.T) {
+			for _, dialect := range []string{"mysql", "sqlite", "postgres"} {
+				sql, args := dialectSQL(dialect, query+clause, []any{"channel"})
+				want := "SELECT data FROM channels WHERE id=?"
+				if dialect == "mysql" {
+					want += " FOR UPDATE"
+				} else if dialect == "postgres" {
+					want = query + clause
+				}
+				if sql != want || !reflect.DeepEqual(args, []any{"channel"}) {
+					t.Fatalf("%s: SQL = %q, args = %#v; want %q", dialect, sql, args, want)
+				}
+			}
+		})
+	}
+	if sql, _ := dialectSQL("mysql", query, []any{"channel"}); sql != "SELECT data FROM channels WHERE id=?" {
+		t.Fatalf("ordinary read gained an unnecessary lock: %s", sql)
+	}
+}
+
 func TestDialectTimestampsPreserveApplicationValues(t *testing.T) {
 	stamp := "2026-10-28T04:05:06.123456Z"
 	for _, dialect := range []string{"sqlite", "mysql"} {

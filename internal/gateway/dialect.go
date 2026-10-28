@@ -11,7 +11,7 @@ var jsonChain = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_.]*)((?:\s*->>?\s*'[^
 var jsonKey = regexp.MustCompile(`->>?\s*'([^']+)'`)
 var booleanJSONCast = regexp.MustCompile(`\(([A-Za-z_][A-Za-z0-9_.]*(?:\s*->>?\s*'[^']+')+)\)::boolean`)
 var numericCast = regexp.MustCompile(`::(?:double precision|bigint|integer|int|numeric|text|timestamptz)(?:\[\])?\b`)
-var rowLock = regexp.MustCompile(`(?i)\s+FOR\s+(?:UPDATE|SHARE)(?:\s+OF\s+[A-Za-z_,]+)?`)
+var rowLock = regexp.MustCompile(`(?i)\s+(?:FOR\s+(?:UPDATE|SHARE)(?:\s+OF\s+[A-Za-z_,]+)?|LOCK\s+IN\s+SHARE\s+MODE)\b`)
 var conflictNothing = regexp.MustCompile(`(?i)\s+ON\s+CONFLICT(?:\s*\([^)]*\))?\s+DO\s+NOTHING\s*$`)
 var conflictUpdate = regexp.MustCompile(`(?i)\s+ON\s+CONFLICT\s*\([^)]*\)\s+DO\s+UPDATE\s+SET\s+`)
 var excludedColumn = regexp.MustCompile(`(?i)\bexcluded\.([A-Za-z_][A-Za-z0-9_]*)`)
@@ -48,7 +48,10 @@ func dialectSQL(dialect, query string, args []any) (string, []any) {
 		query = strings.ReplaceAll(query, "now()+interval '24 hours'", "strftime('%Y-%m-%d %H:%M:%f000','now','+24 hours')")
 		query = strings.ReplaceAll(query, "now()", "strftime('%Y-%m-%d %H:%M:%f000','now')")
 	} else {
-		query = strings.ReplaceAll(query, " FOR UPDATE OF k,b", " FOR UPDATE")
+		// TiDB rejects shared locks by default, and enabling noop compatibility
+		// would silently remove their protection. Exclusive row locks are
+		// supported by both MySQL and TiDB and preserve the channel-first order.
+		query = rowLock.ReplaceAllString(query, " FOR UPDATE")
 		query = strings.ReplaceAll(query, "now()+interval '24 hours'", "DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 24 HOUR)")
 		query = strings.ReplaceAll(query, "now()", "UTC_TIMESTAMP(6)")
 		query = mysqlConcat.ReplaceAllStringFunc(query, func(expression string) string {
